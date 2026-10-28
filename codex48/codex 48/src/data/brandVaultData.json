@@ -1,0 +1,80 @@
+{
+"guidelines": [
+{
+"id": "BP-G001",
+"category": "Tone",
+"description": "Use a confident, friendly, and professional tone that communicates value without sounding exaggerated or aggressive.",
+"source": "BrandPulse AI Voice Guide v1.0"
+},
+{
+"id": "BP-G002",
+"category": "Terminology",
+"description": "Use clear, consistent product terminology. Refer to the platform as BrandPulse AI and describe its capabilities as AI-powered brand insights and analytics.",
+"source": "BrandPulse AI Terminology Guide v1.0"
+},
+{
+"id": "BP-G003",
+"category": "Accessibility",
+"description": "Write in plain language, expand unfamiliar acronyms on first use, provide descriptive link text, and avoid relying on color alone to convey meaning.",
+"source": "BrandPulse AI Accessibility Standards v1.0"
+},
+{
+"id": "BP-G004",
+"category": "Accuracy",
+"description": "Ensure every product claim is supported by verified documentation or approved evidence. Never invent performance metrics, customer testimonials, certifications, or guarantees.",
+"source": "BrandPulse AI Claims Policy v1.0"
+},
+{
+"id": "BP-G005",
+"category": "Inclusivity",
+"description": "Use respectful, inclusive, and gender-neutral language. Avoid stereotypes, discriminatory assumptions, and language that excludes users based on background or ability.",
+"source": "BrandPulse AI Inclusive Communication Guide v1.0"
+},
+{
+"id": "BP-G006",
+"category": "Formatting",
+"description": "Keep headlines concise, use sentence case, break complex information into readable sections, and use bullet points when presenting multiple product benefits.",
+"source": "BrandPulse AI Content Style Guide v1.0"
+}
+],
+"approvedFacts": [
+"BrandPulse AI helps teams organize brand insights in one workspace.",
+"The platform provides AI-assisted analysis of brand-related data.",
+"Users can explore trends through configurable analytics dashboards.",
+"BrandPulse AI supports collaborative workflows for marketing teams.",
+"Reports can be organized to support internal reviews and decision-making.",
+"Product features and availability may vary by subscription plan."
+],
+"forbiddenTerms": [
+{
+"term": "Guaranteed success",
+"reason": "Promises a specific business outcome that cannot be universally guaranteed.",
+"suggestedReplacement": "Designed to support better-informed business decisions"
+},
+{
+"term": "Revolutionary",
+"reason": "Uses vague, exaggerated language without providing measurable evidence.",
+"suggestedReplacement": "AI-powered"
+},
+{
+"term": "Crush the competition",
+"reason": "Uses unnecessarily aggressive language that conflicts with the brand's collaborative tone.",
+"suggestedReplacement": "Strengthen your competitive understanding"
+},
+{
+"term": "Effortless perfection",
+"reason": "Implies flawless results and zero effort, creating unrealistic expectations.",
+"suggestedReplacement": "A streamlined workflow"
+},
+{
+"term": "100% accurate AI",
+"reason": "Makes an unsupported absolute accuracy claim about AI-generated results.",
+"suggestedReplacement": "AI-assisted insights that can be reviewed and validated"
+}
+],
+"sampleDrafts": [
+"BrandPulse AI is the revolutionary tool that guarantees success overnight! Crush every competitor and dominate your market with 100% accurate AI insights.",
+"Stop wasting time with your outdated marketing team. Our platform does everything perfectly, effortlessly, and without a single mistake.",
+"Want unlimited growth with zero effort? BrandPulse AI guarantees that your brand will become the number one choice for every customer. Sign up now before your competitors discover our secret!"
+]
+}

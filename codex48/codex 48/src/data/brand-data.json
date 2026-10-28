@@ -1,0 +1,58 @@
+{
+  "brand": {
+    "name": "BrandPulse AI",
+    "voice": "Confident, clear and human. We inform, we never over-promise.",
+    "tone": ["Confident", "Transparent", "Warm", "Precise"]
+  },
+  "rules": [
+    {
+      "id": "R-01",
+      "title": "No absolute guarantees",
+      "severity": "red",
+      "terms": ["guaranteed", "100% guaranteed", "risk-free", "no risk"],
+      "description": "Absolute claims create legal exposure and break our transparency principle.",
+      "citation": "Brand Guide §2.1 — Claims & Promises",
+      "replacement": "designed to help"
+    },
+    {
+      "id": "R-02",
+      "title": "No unverified superlatives",
+      "severity": "red",
+      "terms": ["best in the world", "#1", "number one", "world-class"],
+      "description": "Superlatives must be backed by a cited third-party source.",
+      "citation": "Legal Policy L-14 — Comparative Advertising",
+      "replacement": "a trusted choice"
+    },
+    {
+      "id": "R-03",
+      "title": "Avoid hype language",
+      "severity": "amber",
+      "terms": ["revolutionary", "game-changing", "groundbreaking", "mind-blowing"],
+      "description": "Hype words dilute credibility. Prefer concrete, specific benefits.",
+      "citation": "Brand Guide §3.4 — Tone of Voice",
+      "replacement": "practical"
+    },
+    {
+      "id": "R-04",
+      "title": "Avoid pressure tactics",
+      "severity": "amber",
+      "terms": ["act now", "hurry", "last chance", "don't miss out"],
+      "description": "Urgency language conflicts with our warm, respectful tone.",
+      "citation": "Brand Guide §3.6 — Calls to Action",
+      "replacement": "explore when you are ready"
+    }
+  ],
+  "approvedFacts": [
+    { "id": "F-01", "claim": "Founded in 2019 and headquartered in Bengaluru, India.", "source": "Corporate Fact Sheet 2026" },
+    { "id": "F-02", "claim": "Trusted by over 1,200 brands across 14 countries.", "source": "Q3 2026 Investor Update" },
+    { "id": "F-03", "claim": "Average campaign review time reduced by 38%.", "source": "Internal Study, Sept 2026" },
+    { "id": "F-04", "claim": "Delivers 99.9% enterprise uptime SLA across all tier-1 cloud regions.", "source": "Engineering Infrastructure SLA" },
+    { "id": "F-05", "claim": "Processes over 2.5 billion brand sentiment signals daily in real-time.", "source": "Data Platform Metrics 2026" },
+    { "id": "F-06", "claim": "SOC 2 Type II and ISO 27001 certified for enterprise data protection.", "source": "Trust & Security Center" }
+  ],
+  "palette": [
+    { "name": "Deep Navy", "hex": "#0B132B" },
+    { "name": "Emerald", "hex": "#047857" },
+    { "name": "Slate White", "hex": "#F8FAFC" }
+  ]
+}

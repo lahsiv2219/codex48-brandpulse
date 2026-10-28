@@ -1,0 +1,80 @@
+{
+  "guidelines": [
+    {
+      "id": "GL-001",
+      "category": "Tone",
+      "description": "Maintain an empathetic, professional, and empowering tone across all customer communications.",
+      "source": "Brand Voice Guidelines 2026"
+    },
+    {
+      "id": "GL-002",
+      "category": "Terminology",
+      "description": "Always capitalize proprietary platform feature names such as 'PulseStream' and 'InsightMatrix'.",
+      "source": "Product Naming Standards"
+    },
+    {
+      "id": "GL-003",
+      "category": "Accessibility",
+      "description": "Ensure all public-facing visual content includes informative alternative text and satisfies WCAG 2.1 AA contrast requirements.",
+      "source": "Accessibility Playbook"
+    },
+    {
+      "id": "GL-004",
+      "category": "Tone",
+      "description": "Avoid hyperbole, exaggerated claims, and fear-based marketing tactics (FOMO).",
+      "source": "Content Ethics Policy"
+    },
+    {
+      "id": "GL-005",
+      "category": "Terminology",
+      "description": "Refer to our AI engine as 'BrandPulse AI Copilot', never merely an 'algorithm' or 'bot'.",
+      "source": "Brand Identity System"
+    },
+    {
+      "id": "GL-006",
+      "category": "Accessibility",
+      "description": "Use clear, concise sentences with an 8th-grade reading level target for general marketing collateral.",
+      "source": "Plain Language Guide"
+    }
+  ],
+  "approvedFacts": [
+    "Delivers 99.9% enterprise uptime SLA across all tier-1 cloud regions.",
+    "Processes over 2.5 billion brand sentiment signals daily in real-time.",
+    "SOC 2 Type II and ISO 27001 certified for enterprise data protection.",
+    "Integrates natively with over 45 modern marketing and CRM platforms.",
+    "Decreases customer response turnaround time by an average of 42%.",
+    "Trusted by over 1,200 global marketing teams worldwide."
+  ],
+  "forbiddenTerms": [
+    {
+      "term": "cheap",
+      "reason": "Conveys poor quality and diminishes enterprise brand positioning.",
+      "suggestedReplacement": "cost-effective"
+    },
+    {
+      "term": "ninja",
+      "reason": "Unprofessional and dated startup cliché.",
+      "suggestedReplacement": "expert"
+    },
+    {
+      "term": "magic",
+      "reason": "Misleads users and obscures explainable AI architecture.",
+      "suggestedReplacement": "intelligent automation"
+    },
+    {
+      "term": "guarantee 100% success",
+      "reason": "Creates strict legal liability and sets unrealistic expectations.",
+      "suggestedReplacement": "consistently optimizes outcomes"
+    },
+    {
+      "term": "crazy fast",
+      "reason": "Imprecise and overly casual slang.",
+      "suggestedReplacement": "sub-second latency"
+    }
+  ],
+  "sampleDrafts": [
+    "Our crazy fast ninja bot works like pure magic to guarantee 100% success so your cheap brand explodes overnight! Buy now or get left in the dust!",
+    "Don't let competitors crush you! Our secret algorithm fixes every marketing disaster instantly without you lifting a finger.",
+    "BrandPulse is the cheapest AI tool around that delivers crazy fast magic to make your team look like absolute marketing rockstars!"
+  ]
+}
