@@ -129,11 +129,18 @@ const ROLES = [
 ];
 
 const TABS = [
-  { key: 'scanner', label: 'Scanner', icon: ScanLine },
-  { key: 'visual', label: 'Visual Check', icon: Palette },
-  { key: 'vault', label: 'Brand Vault', icon: Library },
-  { key: 'workflow', label: 'Workflow', icon: GitBranch },
-  { key: 'insights', label: 'Insights', icon: BarChart3 },
+  { key: 'scanner', label: 'Scanner', icon: ScanLine, help: 'Paste your writing, press Run AI Scan, then fix each problem card with one click.' },
+  { key: 'visual', label: 'Visual Check', icon: Palette, help: 'Drop in an image or pick colours to check that text on top of them is easy to read.' },
+  { key: 'vault', label: 'Brand Vault', icon: Library, help: 'These are your company rules. The Scanner checks every draft against them.' },
+  { key: 'workflow', label: 'Workflow', icon: GitBranch, help: 'Follow a draft from first write-up to published. Every step is saved in a tamper-proof log.' },
+  { key: 'insights', label: 'Insights', icon: BarChart3, help: 'See how your team is doing: scores, common mistakes and totals.' },
+];
+
+const TONE_ROWS = [
+  ['formality', 'Formality', 'How professional it sounds'],
+  ['empathy', 'Empathy', 'How caring and human it feels'],
+  ['urgency', 'Urgency', 'How much it pushes people to hurry'],
+  ['aggressiveness', 'Pushiness', 'How forceful it sounds'],
 ];
 
 const STAGES = [
@@ -210,6 +217,26 @@ function wcag(ratio) {
     aaLarge: ratio >= 3,
     aaaText: ratio >= 7,
   };
+}
+
+function wordDiff(a, b) {
+  const x = a.split(/(\s+)/).filter(Boolean);
+  const y = b.split(/(\s+)/).filter(Boolean);
+  const m = x.length, n = y.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = x[i] === y[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const left = [], right = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (x[i] === y[j]) { left.push({ t: x[i] }); right.push({ t: y[j] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { left.push({ t: x[i], del: true }); i++; }
+    else { right.push({ t: y[j], add: true }); j++; }
+  }
+  while (i < m) left.push({ t: x[i++], del: true });
+  while (j < n) right.push({ t: y[j++], add: true });
+  return { left, right };
 }
 
 function localScan(text) {
@@ -309,6 +336,10 @@ function ScannerTab({ role, onLog }) {
   const [loading, setLoading] = useState(false);
   const [source, setSource] = useState(null);
   const [scanned, setScanned] = useState(false);
+  const [tone, setTone] = useState(null);
+  const [blocked, setBlocked] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [baseline, setBaseline] = useState('');
 
   const counts = useMemo(() => {
     const open = issues.filter((i) => !accepted[i.id]);
@@ -323,6 +354,8 @@ function ScannerTab({ role, onLog }) {
     if (!scanned) return null;
     return Math.max(0, 100 - counts.red * 18 - counts.amber * 7);
   }, [scanned, counts]);
+
+  const diff = useMemo(() => (baseline && baseline !== draft ? wordDiff(baseline, draft) : null), [baseline, draft]);
 
   const runScan = async () => {
     if (!draft.trim()) return;
@@ -339,12 +372,19 @@ function ScannerTab({ role, onLog }) {
       const json = await res.json();
       result = normalizeIssues(json.issues);
       setSource('api');
+      setTone(json.tone || null);
+      setBlocked(!!json.blocked);
+      setNotice(json.warning || '');
     } catch {
       await new Promise((r) => setTimeout(r, 700));
       result = normalizeIssues(localScan(draft));
       setSource('local');
+      setTone(null);
+      setBlocked(false);
+      setNotice('The live scan could not be reached, so only your Brand Vault word rules were checked.');
     }
     setIssues(result);
+    setBaseline(draft);
     setScanned(true);
     setLoading(false);
     onLog(`Ran AI scan — ${result.length} issue${result.length === 1 ? '' : 's'} flagged`);
@@ -353,7 +393,7 @@ function ScannerTab({ role, onLog }) {
   const acceptRewrite = (issue) => {
     if (!issue.flagged) return;
     const re = new RegExp(escapeRegExp(issue.flagged), 'i');
-    setDraft((d) => d.replace(re, issue.rewrite || ''));
+    setDraft((d) => d.replace(re, issue.rewrite || '').replace(/ {2,}/g, ' '));
     setAccepted((a) => ({ ...a, [issue.id]: true }));
     onLog(`Accepted rewrite for "${issue.flagged}"`);
   };
@@ -366,6 +406,14 @@ function ScannerTab({ role, onLog }) {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
       {/* Left: editor */}
       <div className="lg:col-span-3">
+        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {['Paste or type your text below', 'Press “Run AI Scan”', 'Fix each problem card with one click'].map((t, i) => (
+            <div key={t} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#047857] text-xs font-bold text-white">{i + 1}</span>
+              {t}
+            </div>
+          ))}
+        </div>
         <Card className="p-5">
           <SectionTitle
             icon={ScanLine}
@@ -378,6 +426,10 @@ function ScannerTab({ role, onLog }) {
                   setIssues([]);
                   setAccepted({});
                   setScanned(false);
+                  setTone(null);
+                  setBlocked(false);
+                  setNotice('');
+                  setBaseline('');
                 }}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
@@ -421,6 +473,58 @@ function ScannerTab({ role, onLog }) {
               </Card>
             ))}
           </div>
+        )}
+        {scanned && blocked && (
+          <Card className="mt-4 border-red-200 bg-red-50 p-4">
+            <div className="flex items-start gap-2 text-sm text-red-800">
+              <AlertCircle size={18} className="mt-0.5 shrink-0" />
+              <div><b>Blocked: offensive language found.</b> Remove the flagged words on the right. The tone check runs once they are gone.</div>
+            </div>
+          </Card>
+        )}
+
+        {scanned && notice && <p className="mt-3 text-xs text-slate-500">{notice}</p>}
+
+        {scanned && tone && (
+          <Card className="mt-4 p-5">
+            <SectionTitle icon={Sparkles} title="Tone of your writing" subtitle="Scores run from 1 (low) to 5 (high). Urgency or pushiness of 4+ turns red." />
+            <div className="space-y-3">
+              {TONE_ROWS.map(([k, label, desc]) => {
+                const v = tone[k] || 1;
+                const warn = (k === 'urgency' || k === 'aggressiveness') && v >= 4;
+                return (
+                  <div key={k} className="grid grid-cols-[130px_1fr_32px] items-center gap-3">
+                    <div className="text-sm font-medium text-slate-700">{label}<div className="text-[11px] font-normal text-slate-500">{desc}</div></div>
+                    <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+                      <div className={`h-full rounded-full ${warn ? 'bg-red-500' : 'bg-[#047857]'}`} style={{ width: `${(v / 5) * 100}%` }} />
+                    </div>
+                    <div className="text-right text-xs text-slate-500">{v}/5</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
+
+        {diff && (
+          <Card className="mt-4 p-5">
+            <SectionTitle icon={GitBranch} title="Before and after" subtitle="Red = removed from your text. Green = added." />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Before</div>
+                <div className="whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-relaxed text-slate-800">
+                  {diff.left.map((w, i) => <span key={i} className={w.del ? 'rounded bg-red-100 text-red-800 line-through' : ''}>{w.t}</span>)}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">After</div>
+                <div className="whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-relaxed text-slate-800">
+                  {diff.right.map((w, i) => <span key={i} className={w.add ? 'rounded bg-emerald-100 text-emerald-800' : ''}>{w.t}</span>)}
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Press “Run AI Scan” again to check the new version.</p>
+          </Card>
         )}
       </div>
 
@@ -513,10 +617,9 @@ function ScannerTab({ role, onLog }) {
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() => acceptRewrite(issue)}
-                          disabled={!issue.rewrite}
                           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#047857] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#065f46] disabled:opacity-40"
                         >
-                          <Check size={14} /> Accept Rewrite
+                          <Check size={14} /> {issue.rewrite ? 'Accept Rewrite' : 'Remove this text'}
                         </button>
                         <button
                           onClick={() => dismiss(issue)}
@@ -1373,6 +1476,9 @@ export default function Page() {
 
       {/* Content */}
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        <p className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          💡 {TABS.find((t) => t.key === tab)?.help}
+        </p>
         {tab === 'scanner' && <ScannerTab role={roleKey} onLog={addLog} />}
         {tab === 'visual' && <VisualTab onLog={addLog} />}
         {tab === 'vault' && <VaultTab />}
