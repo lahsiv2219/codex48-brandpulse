@@ -129,7 +129,7 @@ const ROLES = [
 ];
 
 const TABS = [
-  { key: 'scanner', label: 'Scanner', icon: ScanLine, help: 'Paste your writing, press Run AI Scan, then fix each problem card with one click.' },
+  { key: 'scanner', label: 'Scanner', icon: ScanLine, help: 'Paste your writing or upload a PDF or Word file, press Run AI Scan, then fix each problem card with one click.' },
   { key: 'visual', label: 'Visual Check', icon: Palette, help: 'Drop in an image or pick colours to check that text on top of them is easy to read.' },
   { key: 'vault', label: 'Brand Vault', icon: Library, help: 'These are your company rules. The Scanner checks every draft against them.' },
   { key: 'workflow', label: 'Workflow', icon: GitBranch, help: 'Follow a draft from first write-up to published. Every step is saved in a tamper-proof log.' },
@@ -330,7 +330,7 @@ function Badge({ children, tone = 'slate' }) {
 /* ------------------------------------------------------------------ */
 
 function ScannerTab({ role, onLog }) {
-  const [draft, setDraft] = useState(SAMPLE_DRAFT);
+  const [draft, setDraft] = useState('');
   const [issues, setIssues] = useState([]);
   const [accepted, setAccepted] = useState({});
   const [loading, setLoading] = useState(false);
@@ -340,6 +340,9 @@ function ScannerTab({ role, onLog }) {
   const [blocked, setBlocked] = useState(false);
   const [notice, setNotice] = useState('');
   const [baseline, setBaseline] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [fileNote, setFileNote] = useState('');
+  const fileRef = useRef(null);
 
   const counts = useMemo(() => {
     const open = issues.filter((i) => !accepted[i.id]);
@@ -355,6 +358,53 @@ function ScannerTab({ role, onLog }) {
     return Math.max(0, 100 - counts.red * 18 - counts.amber * 7);
   }, [scanned, counts]);
 
+  const resetResults = () => {
+    setIssues([]);
+    setAccepted({});
+    setScanned(false);
+    setTone(null);
+    setBlocked(false);
+    setNotice('');
+    setBaseline('');
+  };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setFileNote('');
+    const name = (file.name || '').toLowerCase();
+    if (file.size > 4 * 1024 * 1024) {
+      setFileNote('That file is bigger than 4 MB. Please choose a smaller one.');
+      return;
+    }
+    const isText = name.endsWith('.txt') || name.endsWith('.md');
+    if (!isText && !name.endsWith('.pdf') && !name.endsWith('.docx')) {
+      setFileNote('Please choose a PDF, a Word file (.docx) or a text file (.txt). For an old .doc file, open it in Word and use Save As → .docx first.');
+      return;
+    }
+    setUploading(true);
+    try {
+      let text = '';
+      if (isText) {
+        text = await file.text();
+      } else {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/extract', { method: 'POST', body: fd });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || 'Could not read that file.');
+        text = json.text;
+        if (json.note) setFileNote(json.note);
+      }
+      setDraft(text);
+      resetResults();
+      onLog(`Loaded file "${file.name}"`);
+    } catch (e) {
+      setFileNote(e.message || 'Could not read that file.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const diff = useMemo(() => (baseline && baseline !== draft ? wordDiff(baseline, draft) : null), [baseline, draft]);
 
   const runScan = async () => {
@@ -366,12 +416,12 @@ function ScannerTab({ role, onLog }) {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: draft, rules: DATA.rules, approvedFacts: DATA.approvedFacts }),
+        body: JSON.stringify({ text: draft, rules: DATA.rules, approvedFacts: DATA.approvedFacts, brandVoice: DATA.brand.voice }),
       });
       if (!res.ok) throw new Error('scan failed');
       const json = await res.json();
       result = normalizeIssues(json.issues);
-      setSource('api');
+      setSource(json.engine === 'ai' ? 'api' : 'builtin');
       setTone(json.tone || null);
       setBlocked(!!json.blocked);
       setNotice(json.warning || '');
@@ -407,7 +457,7 @@ function ScannerTab({ role, onLog }) {
       {/* Left: editor */}
       <div className="lg:col-span-3">
         <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {['Paste or type your text below', 'Press “Run AI Scan”', 'Fix each problem card with one click'].map((t, i) => (
+          {['Paste, type or upload your text', 'Press “Run AI Scan”', 'Fix each problem card with one click'].map((t, i) => (
             <div key={t} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
               <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#047857] text-xs font-bold text-white">{i + 1}</span>
               {t}
@@ -440,10 +490,37 @@ function ScannerTab({ role, onLog }) {
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              handleFile(e.dataTransfer.files?.[0]);
+            }}
             rows={13}
-            placeholder="Paste your draft here…"
+            placeholder={`Paste or type your text here, or drop a PDF or Word file onto this box.\n\nExample: ${SAMPLE_DRAFT}`}
             className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-sm leading-relaxed text-slate-800 outline-none transition focus:border-[#047857] focus:bg-white focus:ring-4 focus:ring-[#047857]/10"
           />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.md"
+              className="hidden"
+              onChange={(e) => {
+                handleFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              {uploading ? 'Reading file…' : 'Upload PDF or Word file'}
+            </button>
+            <span className="text-xs text-slate-400">or drag a file onto the box · PDF, .docx or .txt · up to 4 MB</span>
+          </div>
+          {fileNote && <p className="mt-2 text-xs text-amber-700">{fileNote}</p>}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-500">
               {draft.trim() ? draft.trim().split(/\s+/).length : 0} words · {draft.length} characters
@@ -478,7 +555,7 @@ function ScannerTab({ role, onLog }) {
           <Card className="mt-4 border-red-200 bg-red-50 p-4">
             <div className="flex items-start gap-2 text-sm text-red-800">
               <AlertCircle size={18} className="mt-0.5 shrink-0" />
-              <div><b>Blocked: offensive language found.</b> Remove the flagged words on the right. The tone check runs once they are gone.</div>
+              <div><b>Blocked: harmful language found.</b> Remove the flagged text on the right. The tone check runs once it is gone.</div>
             </div>
           </Card>
         )}
@@ -535,7 +612,7 @@ function ScannerTab({ role, onLog }) {
             icon={ShieldCheck}
             title="Explainable Issue Cards"
             subtitle="Every flag shows why, and where the rule comes from."
-            right={source && <Badge tone={source === 'api' ? 'green' : 'slate'}>{source === 'api' ? 'Live AI' : 'Local rules'}</Badge>}
+            right={source && <Badge tone={source === 'api' ? 'green' : 'slate'}>{source === 'api' ? 'Live AI' : source === 'builtin' ? 'Built-in checker' : 'Local rules'}</Badge>}
           />
 
           {!scanned && !loading && (
@@ -900,7 +977,29 @@ function VaultTab() {
       </Card>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-3">
+        <div className="space-y-6 lg:col-span-3">
+          <Card className="p-5">
+            <SectionTitle
+              icon={Lock}
+              title="Built-in Protection"
+              subtitle="Always on. These checks run on every scan and cannot be switched off."
+              right={<Badge tone="green">Always on</Badge>}
+            />
+            <ul className="space-y-2.5 text-sm text-slate-700">
+              {[
+                ['Hate speech and slurs', 'Including disguised spellings like f.u.c.k, leetspeak and hidden characters.'],
+                ['Swearing and profanity', 'Blocked before anything else is checked.'],
+                ['Threats, violence and self-harm', 'Whole sentences are flagged so they can be removed.'],
+                ['Angry, pushy or hostile tone', 'The AI scores formality, empathy, urgency and pushiness and flags problem sentences.'],
+                ['Unproven claims and statistics', 'Compared against the Approved Facts on this page.'],
+              ].map(([t, d]) => (
+                <li key={t} className="flex items-start gap-2">
+                  <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[#047857]" />
+                  <span><b className="font-semibold text-[#0B132B]">{t}.</b> {d}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
           <Card className="p-5">
             <SectionTitle
               icon={ShieldCheck}
@@ -1329,7 +1428,7 @@ function InsightsTab() {
 /* ------------------------------------------------------------------ */
 
 export default function Page() {
-  const [roleKey, setRoleKey] = useState('creator');
+  const [roleKey] = useState('admin');
   const [tab, setTab] = useState('scanner');
   const [menuOpen, setMenuOpen] = useState(false);
   const [stage, setStage] = useState(1);
@@ -1412,42 +1511,6 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setMenuOpen((o) => !o)}
-              className="flex items-center gap-2.5 rounded-xl bg-white/10 px-3 py-2 text-left text-white ring-1 ring-white/15 transition hover:bg-white/15"
-            >
-              <UserCircle2 size={26} className="text-emerald-400" />
-              <div className="leading-tight">
-                <div className="text-sm font-semibold">{role.name}</div>
-                <div className="text-[11px] text-slate-300">{role.label}</div>
-              </div>
-              <ChevronDown size={16} className={`text-slate-300 transition ${menuOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 mt-2 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                <div className="border-b border-slate-100 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Switch role</div>
-                {ROLES.map((r) => (
-                  <button
-                    key={r.key}
-                    onClick={() => {
-                      setRoleKey(r.key);
-                      setMenuOpen(false);
-                    }}
-                    className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition hover:bg-slate-50 ${
-                      r.key === roleKey ? 'bg-emerald-50' : ''
-                    }`}
-                  >
-                    <span>
-                      <span className="font-semibold text-[#0B132B]">{r.label}</span>
-                      <span className="text-slate-500">: {r.name}</span>
-                    </span>
-                    {r.key === roleKey && <Check size={16} className="text-[#047857]" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Tabs */}
@@ -1503,7 +1566,7 @@ export default function Page() {
       </main>
 
       <footer className="mx-auto max-w-7xl px-6 pb-8 text-center text-xs text-slate-400">
-        BrandPulse AI · Signed in as {role.name} ({role.label})
+        BrandPulse AI
       </footer>
     </div>
   );
