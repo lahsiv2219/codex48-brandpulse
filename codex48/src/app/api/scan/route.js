@@ -245,6 +245,8 @@ function runVaultPass(draftText, rules) {
       flags.push({
         id: `vault-${label}-${index}`,
         kind: 'rule',
+        index,
+        sentenceRewrite: !!item.sentenceRewrite,
         flagged: matchText,
         phrase: matchText,
         title: item.title || (severity === 'red' ? 'Critical brand violation' : 'Brand advisory'),
@@ -277,6 +279,78 @@ function runVaultPass(draftText, rules) {
     }
   });
   return flags;
+}
+
+/* ---------- Tone rules: flag the whole sentence and suggest a calmer version ---------- */
+function sentenceBounds(text, index, length) {
+  let a = index;
+  let b = index + length;
+  while (a > 0 && !/[.!?\n]/.test(text[a - 1])) a--;
+  while (b < text.length && !/[.!?\n]/.test(text[b])) b++;
+  if (b < text.length && /[.!?]/.test(text[b])) b++;
+  return [a, b];
+}
+
+function mergeToSentences(draftText, flags) {
+  const keep = [];
+  const groups = new Map();
+  for (const f of flags) {
+    if (!f.sentenceRewrite) { keep.push(f); continue; }
+    const [a, b] = sentenceBounds(draftText, f.index, f.phrase.length);
+    const phrase = draftText.slice(a, b).trim();
+    if (!phrase) { keep.push(f); continue; }
+    const g = groups.get(phrase) || { phrase, start: a, items: [] };
+    g.items.push(f);
+    groups.set(phrase, g);
+  }
+  const merged = [...groups.values()].map((g) => {
+    const first = g.items.find((x) => x.severity === 'red') || g.items[0];
+    const words = [...new Set(g.items.map((x) => x.phrase.toLowerCase()))];
+    const msg = words.length > 1 ? `${first.message} Found: ${words.map((w) => `“${w}”`).join(', ')}.` : first.message;
+    return { ...first, id: `tone-${g.start}`, flagged: g.phrase, phrase: g.phrase, message: msg, explanation: msg, rewrite: '', suggestedRewrite: '', needsRewrite: true };
+  });
+  return [...keep, ...merged];
+}
+
+const INSULTS = /\b(idiot|stupid|moron|loser|shut up|useless|pathetic)\b/i;
+const LOCAL_SWAPS = [
+  [/\b(?:angry|furious|upset|mad) (?:at|with) you\b/gi, 'concerned about this'],
+  [/\byou must\b/gi, 'please'],
+  [/\byour fault\b/gi, 'something we can look into together'],
+  [/\bsick of\b/gi, 'concerned about'],
+  [/\bfed up with\b/gi, 'concerned about'],
+  [/\bfed up\b/gi, 'concerned'],
+  [/\bor else\b/gi, 'so we can sort this out'],
+  [/\bno excuses\b/gi, 'let us find a solution together'],
+  [/\bexcuses\b/gi, 'reasons'],
+  [/\bfurious\b/gi, 'very concerned'],
+  [/\bangry\b/gi, 'concerned'],
+  [/\bi hate you\b/gi, 'I disagree with you'],
+];
+
+// Used when the AI is unavailable: swap harsh phrases for calmer ones.
+function localRewrite(sentence) {
+  if (INSULTS.test(sentence)) return "I'd like to talk through this respectfully.";
+  let out = sentence;
+  let changed = false;
+  for (const [re, rep] of LOCAL_SWAPS) {
+    const next = out.replace(re, rep);
+    if (next !== out) changed = true;
+    out = next;
+  }
+  if (!changed) return "I'd like to talk through what went wrong.";
+  out = out.trim();
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+function uniqueByPhrase(list) {
+  const seen = new Set();
+  return list.filter((f) => {
+    const k = f.phrase.trim().toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 /* ---------- STAGE 2 fallback: works with no AI key ---------- */
@@ -339,7 +413,7 @@ function localAnalysis(text) {
 }
 
 /* ---------- STAGE 2: Gemini ---------- */
-async function runAiPass(draftText, rules, facts, brandVoice) {
+async function runAiPass(draftText, rules, facts, brandVoice, toRewrite = []) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { failed: 'No GEMINI_API_KEY is set on the server' };
 
@@ -350,7 +424,9 @@ Claims backed by proof in the Brand Vault (these are OK to use): ${JSON.stringif
 
 Review the draft below. Return ONLY JSON in exactly this shape:
 {"tone":{"formality":1-5,"empathy":1-5,"urgency":1-5,"aggressiveness":1-5},
- "issues":[{"sentence":"exact sentence copied from the draft","problem":"plain-language reason","rule":"which brand principle it breaks","severity":"red or amber","rewrite":"compliant rewrite of that exact sentence, same meaning, calm and warm tone"}]}
+ "issues":[{"sentence":"exact sentence copied from the draft","problem":"plain-language reason","rule":"which brand principle it breaks","severity":"red or amber","rewrite":"compliant rewrite of that exact sentence, same meaning, calm and warm tone"}],
+ "rewrites":[{"sentence":"exact sentence from the list below","rewrite":"calm, warm, respectful version that keeps the real point"}]}
+${toRewrite.length ? `Also rewrite each of these sentences in the brand voice (remove blame, anger, commands and insults, keep any genuine request or concern): ${JSON.stringify(toRewrite)}` : 'Set "rewrites" to an empty list.'}
 Always flag slurs, hate speech, insults and profanity with severity red, even when misspelled, spaced out, abbreviated or disguised. Flag every sentence that is angry, hostile, blaming, sarcastic, threatening, pushy, manipulative or deceptive, or that makes statistics or claims NOT backed by the proven claims above. Use severity red for hostile, threatening or deceptive sentences and amber for milder tone problems. Be thorough: short informal text can still break the brand voice. If the draft is truly fine, return an empty issues list.
 
 Draft:
@@ -396,7 +472,8 @@ Draft:
         formality: clamp(t.formality ?? 3), empathy: clamp(t.empathy ?? 3),
         urgency: clamp(t.urgency ?? 3), aggressiveness: clamp(t.aggressiveness ?? 3),
       };
-      return { tone, issues };
+      const rewrites = Array.isArray(parsed.rewrites) ? parsed.rewrites.filter((r) => r && typeof r.sentence === 'string' && typeof r.rewrite === 'string') : [];
+      return { tone, issues, rewrites };
     } catch (err) {
       lastError = `${model}: ${err?.message || 'failed'}`;
     }
@@ -424,14 +501,16 @@ export async function POST(request) {
     const rules = body?.rules && body.rules.length > 0 ? body.rules : vault.forbiddenTerms || vault.rules || [];
 
     const safety = dropNested([...runThreatPass(draftText), ...runSafetyPass(draftText)]);
-    const vaultIssues = dropNested([...safety, ...runVaultPass(draftText, rules)]).filter((f) => f.kind === 'rule');
+    const vaultIssues = mergeToSentences(draftText, dropNested([...safety, ...runVaultPass(draftText, rules)]).filter((f) => f.kind === 'rule'));
+    const toRewrite = vaultIssues.filter((f) => f.needsRewrite).map((f) => f.phrase);
+    let aiRewrites = [];
 
     let tone = null;
     let extra = [];
     let engine = 'blocked';
     let warning;
     if (safety.length === 0) {
-      const ai = await runAiPass(draftText, rules, Array.isArray(body?.approvedFacts) ? body.approvedFacts : [], typeof body?.brandVoice === 'string' ? body.brandVoice : '');
+      const ai = await runAiPass(draftText, rules, Array.isArray(body?.approvedFacts) ? body.approvedFacts : [], typeof body?.brandVoice === 'string' ? body.brandVoice : '', toRewrite);
       if (ai.failed) {
         const local = localAnalysis(draftText);
         tone = local.tone;
@@ -441,11 +520,18 @@ export async function POST(request) {
       } else {
         tone = ai.tone;
         extra = ai.issues;
+        aiRewrites = ai.rewrites || [];
         engine = 'ai';
       }
     }
 
-    const issues = [...safety, ...vaultIssues, ...extra];
+    for (const f of vaultIssues) {
+      if (!f.needsRewrite) continue;
+      const hit = aiRewrites.find((r) => r.sentence.trim() === f.phrase);
+      f.rewrite = (hit && hit.rewrite.trim()) || localRewrite(f.phrase);
+      f.suggestedRewrite = f.rewrite;
+    }
+    const issues = uniqueByPhrase([...safety, ...vaultIssues, ...extra]);
     return NextResponse.json({
       ok: true,
       blocked: safety.length > 0,

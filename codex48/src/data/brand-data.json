@@ -99,7 +99,8 @@
       ],
       "description": "Insults and personal attacks hurt people and damage trust in the brand.",
       "citation": "Zero Tolerance Policy §1.3 — Respect",
-      "replacement": ""
+      "replacement": "",
+      "sentenceRewrite": true
     },
     {
       "id": "R-07",
@@ -117,7 +118,8 @@
       ],
       "description": "Angry, blaming or commanding language conflicts with our warm, respectful tone.",
       "citation": "Brand Guide §3.2 — Tone of Voice",
-      "replacement": ""
+      "replacement": "",
+      "sentenceRewrite": true
     }
   ],
   "approvedFacts": [

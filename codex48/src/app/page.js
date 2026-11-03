@@ -132,8 +132,8 @@ const TABS = [
   { key: 'scanner', label: 'Scanner', icon: ScanLine, help: 'Paste your writing or upload a PDF or Word file, press Run AI Scan, then fix each problem card with one click.' },
   { key: 'visual', label: 'Visual Check', icon: Palette, help: 'Drop in an image or pick colours to check that text on top of them is easy to read.' },
   { key: 'vault', label: 'Brand Vault', icon: Library, help: 'These are your company rules. The Scanner checks every draft against them.' },
-  { key: 'workflow', label: 'Workflow', icon: GitBranch, help: 'Follow a draft from first write-up to published. Every step is saved in a tamper-proof log.' },
-  { key: 'insights', label: 'Insights', icon: BarChart3, help: 'See how your team is doing: scores, common mistakes and totals.' },
+  { key: 'workflow', label: 'Workflow', icon: GitBranch, help: 'Moves a draft through 8 steps, from first write-up to published, with a manager and legal review in between. Every action is saved in a tamper-proof history.' },
+  { key: 'insights', label: 'Insights', icon: BarChart3, help: 'Real numbers from the scans you run: scores, common mistakes and totals. Deleting history resets these.' },
 ];
 
 const TONE_ROWS = [
@@ -403,7 +403,7 @@ function Badge({ children, tone = 'slate' }) {
 /* Tab 1 — Scanner                                                     */
 /* ------------------------------------------------------------------ */
 
-function ScannerTab({ role, onLog }) {
+function ScannerTab({ role, onLog, onScan, onFix }) {
   const [draft, setDraft] = useState('');
   const [issues, setIssues] = useState([]);
   const [accepted, setAccepted] = useState({});
@@ -497,6 +497,9 @@ function ScannerTab({ role, onLog }) {
     onLog('Cleared the scanner');
   };
 
+  const openWithRewrite = issues.filter((i) => !accepted[i.id] && i.rewrite && i.flagged);
+  const openNoRewrite = issues.filter((i) => !accepted[i.id] && !i.rewrite).length;
+
   const diff = useMemo(() => (baseline && baseline !== draft ? wordDiff(baseline, draft) : null), [baseline, draft]);
 
   const runScan = async () => {
@@ -529,15 +532,42 @@ function ScannerTab({ role, onLog }) {
     setBaseline(draft);
     setScanned(true);
     setLoading(false);
-    onLog(`Ran AI scan — ${result.length} issue${result.length === 1 ? '' : 's'} flagged`);
+    const logId = await onLog(`Ran AI scan — ${result.length} issue${result.length === 1 ? '' : 's'} flagged`);
+    const reds = result.filter((i) => i.severity === 'red').length;
+    onScan?.({
+      logId,
+      time: Date.now(),
+      score: Math.max(0, 100 - reds * 18 - (result.length - reds) * 7),
+      found: result.map((i) => ({ label: i.title, severity: i.severity })),
+      fixed: 0,
+    });
   };
 
   const acceptRewrite = (issue) => {
     if (!issue.flagged) return;
     const re = new RegExp(escapeRegExp(issue.flagged), 'i');
-    setDraft((d) => d.replace(re, issue.rewrite || '').replace(/ {2,}/g, ' '));
+    setDraft((d) => d.replace(re, () => issue.rewrite || '').replace(/ {2,}/g, ' '));
     setAccepted((a) => ({ ...a, [issue.id]: true }));
+    onFix?.(1);
     onLog(`Accepted rewrite for "${issue.flagged}"`);
+  };
+
+  const acceptAll = () => {
+    const todo = issues.filter((i) => !accepted[i.id] && i.rewrite && i.flagged);
+    if (!todo.length) return;
+    const longestFirst = [...todo].sort((a, b) => b.flagged.length - a.flagged.length);
+    setDraft((d) => {
+      let out = d;
+      for (const it of longestFirst) out = out.replace(new RegExp(escapeRegExp(it.flagged), 'i'), () => it.rewrite);
+      return out.replace(/ {2,}/g, ' ');
+    });
+    setAccepted((a) => {
+      const next = { ...a };
+      todo.forEach((i) => { next[i.id] = true; });
+      return next;
+    });
+    onFix?.(todo.length);
+    onLog(`Accepted ${todo.length} rewrite${todo.length === 1 ? '' : 's'} at once`);
   };
 
   const dismiss = (issue) => {
@@ -741,6 +771,22 @@ function ScannerTab({ role, onLog }) {
               <CheckCircle2 className="mb-2 text-[#047857]" size={32} />
               <p className="text-sm font-semibold text-emerald-800">All clear</p>
               <p className="mt-1 text-xs text-emerald-700">No brand violations were found in this draft.</p>
+            </div>
+          )}
+
+          {!loading && openWithRewrite.length > 0 && (
+            <div className="mb-3">
+              <button
+                onClick={acceptAll}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B132B] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#16213f]"
+              >
+                <CheckCircle2 size={16} /> Accept all rewrites ({openWithRewrite.length})
+              </button>
+              {openNoRewrite > 0 && (
+                <p className="mt-1.5 text-xs text-slate-500">
+                  {openNoRewrite} item{openNoRewrite === 1 ? ' has' : 's have'} no automatic rewrite. Use “Remove this text” on {openNoRewrite === 1 ? 'it' : 'them'}.
+                </p>
+              )}
             </div>
           )}
 
@@ -1190,7 +1236,7 @@ function VaultTab() {
 /* Tab 4 — Workflow & Audit Log                                        */
 /* ------------------------------------------------------------------ */
 
-function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
+function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDeleteEntry, onClearHistory }) {
   const [verify, setVerify] = useState(null); // { ok, brokenAt }
   const [checking, setChecking] = useState(false);
 
@@ -1235,6 +1281,24 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
     const idx = Math.max(1, Math.floor(log.length / 2) - 1);
     setLog((l) => l.map((e, i) => (i === idx ? { ...e, action: e.action + ' [edited]' } : e)));
     setVerify(null);
+  };
+
+  const tampered = log.some((e) => e.action.endsWith(' [edited]'));
+  const undoTamper = () => {
+    setLog((l) => l.map((e) => (e.action.endsWith(' [edited]') ? { ...e, action: e.action.slice(0, -' [edited]'.length) } : e)));
+    setVerify(null);
+  };
+  const askDelete = (e, i) => {
+    if (window.confirm(`Delete history entry #${i + 1}?\n\n"${e.action}"\n\nIf it was a scan, that scan is also removed from Insights.`)) {
+      onDeleteEntry(e.id);
+      setVerify(null);
+    }
+  };
+  const askClear = () => {
+    if (window.confirm('Delete ALL history?\n\nThis clears the audit log and the Insights numbers, and moves the workflow back to Draft. It cannot be undone.')) {
+      onClearHistory();
+      setVerify(null);
+    }
   };
 
   const fmt = (ts) =>
@@ -1308,14 +1372,30 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
         <SectionTitle
           icon={Lock}
           title="Tamper-Evident Audit Log"
-          subtitle="Each entry is SHA-256 chained to the one before it. Any edit breaks the chain."
+          subtitle="Every action is saved here. Each entry is locked to the one before it, so a secret edit is detected. Try: Simulate tampering, then Verify integrity."
           right={
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={tamper}
+                title="Demo only: secretly edits one entry so you can see Verify integrity catch it"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
-                <Trash2 size={13} /> Simulate tampering
+                <AlertTriangle size={13} /> Simulate tampering
+              </button>
+              {tampered && (
+                <button
+                  onClick={undoTamper}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+                >
+                  <RotateCcw size={13} /> Undo tampering
+                </button>
+              )}
+              <button
+                onClick={askClear}
+                disabled={log.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-40"
+              >
+                <Trash2 size={13} /> Clear all history
               </button>
               <button
                 onClick={runVerify}
@@ -1351,6 +1431,7 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
                 <th className="px-4 py-3">Action</th>
                 <th className="px-4 py-3">Stage</th>
                 <th className="px-4 py-3">Hash</th>
+                <th className="px-4 py-3"><span className="sr-only">Delete</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1374,9 +1455,25 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
                         <Hash size={11} /> {e.hash.slice(0, 10)}…
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => askDelete(e, i)}
+                        title="Delete this entry"
+                        className="rounded-md p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
+              {log.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">
+                    No history yet. Scan a draft or approve a stage and it will appear here.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -1389,136 +1486,158 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog }) {
 /* Tab 5 — Insights                                                    */
 /* ------------------------------------------------------------------ */
 
-const MISTAKES = [
-  { label: 'Absolute guarantees', count: 47 },
-  { label: 'Hype language', count: 38 },
-  { label: 'Unverified superlatives', count: 29 },
-  { label: 'Pressure CTAs', count: 21 },
-  { label: 'Low-contrast text', count: 14 },
-  { label: 'Off-palette colors', count: 9 },
-];
+function InsightsTab({ scans, logCount }) {
+  const total = scans.length;
+  const avg = total ? Math.round(scans.reduce((n, x) => n + x.score, 0) / total) : null;
+  const found = scans.reduce((n, x) => n + x.found.length, 0);
+  const fixed = scans.reduce((n, x) => n + (x.fixed || 0), 0);
 
-const UNCLEAR = [
-  { label: 'Use of emojis', value: 34, color: '#047857' },
-  { label: 'Competitor mentions', value: 26, color: '#0B132B' },
-  { label: 'Regional spellings', value: 22, color: '#34d399' },
-  { label: 'Influencer disclosures', value: 18, color: '#94a3b8' },
-];
+  const counts = {};
+  scans.forEach((x) => x.found.forEach((f) => { counts[f.label] = (counts[f.label] || 0) + 1; }));
+  const mistakes = Object.entries(counts)
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+  const max = mistakes[0]?.count || 1;
 
-const TREND = [62, 58, 61, 54, 49, 47, 41, 38];
-
-function InsightsTab() {
-  const max = Math.max(...MISTAKES.map((m) => m.count));
-  const total = UNCLEAR.reduce((s, u) => s + u.value, 0);
+  const crit = scans.reduce((n, x) => n + x.found.filter((f) => f.severity === 'red').length, 0);
+  const sev = [
+    { label: 'Critical', value: crit, color: '#dc2626' },
+    { label: 'Advisory', value: found - crit, color: '#f59e0b' },
+  ];
   const R = 52;
   const C = 2 * Math.PI * R;
   let offset = 0;
 
-  const tMax = Math.max(...TREND);
-  const pts = TREND.map((v, i) => `${(i / (TREND.length - 1)) * 280 + 10},${90 - (v / tMax) * 75}`).join(' ');
+  const scores = scans.slice(-8).map((x) => x.score);
+  const pts = scores.map((v, i) => `${(i / (scores.length - 1)) * 280 + 10},${90 - (v / 100) * 75}`).join(' ');
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {total === 0 && (
+        <Card className="p-5">
+          <p className="text-sm text-slate-600">
+            <b className="text-[#0B132B]">No data yet.</b> Run a scan in the Scanner tab and your numbers will appear here.
+          </p>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {[
-          { label: 'Drafts scanned', value: '1,284', delta: '+12%' },
-          { label: 'Avg. brand score', value: '86', delta: '+4 pts' },
-          { label: 'Issues auto-fixed', value: '3,902', delta: '+21%' },
-          { label: 'Avg. approval time', value: '1.8 days', delta: '-38%' },
+          { label: 'Drafts scanned', value: total },
+          { label: 'Avg. brand score', value: avg === null ? '—' : avg },
+          { label: 'Problems found', value: found },
+          { label: 'Fixed with rewrites', value: fixed },
+          { label: 'History entries', value: logCount },
         ].map((k) => (
           <Card key={k.label} className="p-4">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{k.label}</div>
             <div className="mt-1 text-2xl font-bold text-[#0B132B]">{k.value}</div>
-            <div className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-              <TrendingUp size={12} /> {k.delta}
-            </div>
           </Card>
         ))}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-6">
-          <SectionTitle icon={AlertTriangle} title="Repeated Mistakes" subtitle="Most frequent violations over the last 30 days" />
-          <div className="space-y-3.5">
-            {MISTAKES.map((m, i) => (
-              <div key={m.label}>
-                <div className="mb-1 flex justify-between text-sm">
-                  <span className="text-slate-700">{m.label}</span>
-                  <span className="font-semibold text-[#0B132B]">{m.count}</span>
-                </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full transition-all duration-700"
-                    style={{ width: `${(m.count / max) * 100}%`, background: i < 2 ? '#dc2626' : i < 4 ? '#f59e0b' : EMERALD }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <SectionTitle icon={HelpCircle} title="Unclear Guidelines" subtitle="Where creators most often ask for clarification" />
-          <div className="flex flex-wrap items-center gap-6">
-            <svg width="150" height="150" viewBox="0 0 140 140" className="shrink-0 -rotate-90">
-              <circle cx="70" cy="70" r={R} fill="none" stroke="#f1f5f9" strokeWidth="18" />
-              {UNCLEAR.map((u) => {
-                const len = (u.value / total) * C;
-                const el = (
-                  <circle
-                    key={u.label}
-                    cx="70"
-                    cy="70"
-                    r={R}
-                    fill="none"
-                    stroke={u.color}
-                    strokeWidth="18"
-                    strokeDasharray={`${len} ${C - len}`}
-                    strokeDashoffset={-offset}
-                  />
-                );
-                offset += len;
-                return el;
-              })}
-            </svg>
-            <div className="min-w-[180px] flex-1 space-y-2.5">
-              {UNCLEAR.map((u) => (
-                <div key={u.label} className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-2 text-slate-700">
-                    <span className="h-3 w-3 rounded-sm" style={{ background: u.color }} />
-                    {u.label}
-                  </span>
-                  <span className="font-semibold text-[#0B132B]">{Math.round((u.value / total) * 100)}%</span>
+          <SectionTitle icon={AlertTriangle} title="Repeated Mistakes" subtitle="The problems found most often in your scans" />
+          {mistakes.length === 0 ? (
+            <p className="text-sm text-slate-500">Nothing to show yet.</p>
+          ) : (
+            <div className="space-y-3.5">
+              {mistakes.map((m, i) => (
+                <div key={m.label}>
+                  <div className="mb-1 flex justify-between text-sm">
+                    <span className="text-slate-700">{m.label}</span>
+                    <span className="font-semibold text-[#0B132B]">{m.count}</span>
+                  </div>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${(m.count / max) * 100}%`, background: i < 2 ? '#dc2626' : i < 4 ? '#f59e0b' : EMERALD }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
-          <p className="mt-5 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-100">
-            Suggestion: add explicit examples for “Use of emojis” to Brand Guide §3 to cut clarification requests.
-          </p>
+          )}
+          {mistakes[0] && (
+            <p className="mt-5 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-100">
+              Suggestion: “{mistakes[0].label}” comes up most. Add clear examples of it to your Brand Guide.
+            </p>
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <SectionTitle icon={HelpCircle} title="How serious were the problems?" subtitle="Critical means it must be fixed before publishing" />
+          {found === 0 ? (
+            <p className="text-sm text-slate-500">Nothing to show yet.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-6">
+              <svg width="150" height="150" viewBox="0 0 140 140" className="shrink-0 -rotate-90">
+                <circle cx="70" cy="70" r={R} fill="none" stroke="#f1f5f9" strokeWidth="18" />
+                {sev.map((u) => {
+                  const len = (u.value / found) * C;
+                  const el = (
+                    <circle
+                      key={u.label}
+                      cx="70"
+                      cy="70"
+                      r={R}
+                      fill="none"
+                      stroke={u.color}
+                      strokeWidth="18"
+                      strokeDasharray={`${len} ${C - len}`}
+                      strokeDashoffset={-offset}
+                    />
+                  );
+                  offset += len;
+                  return el;
+                })}
+              </svg>
+              <div className="min-w-[180px] flex-1 space-y-2.5">
+                {sev.map((u) => (
+                  <div key={u.label} className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2 text-slate-700">
+                      <span className="h-3 w-3 rounded-sm" style={{ background: u.color }} />
+                      {u.label}
+                    </span>
+                    <span className="font-semibold text-[#0B132B]">
+                      {u.value} ({Math.round((u.value / found) * 100)}%)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
       <Card className="p-6">
-        <SectionTitle icon={TrendingUp} title="Violations per 100 drafts" subtitle="Eight-week trend — lower is better" />
-        <svg viewBox="0 0 300 100" className="h-40 w-full">
-          <defs>
-            <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={EMERALD} stopOpacity="0.25" />
-              <stop offset="100%" stopColor={EMERALD} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <polygon points={`10,95 ${pts} 290,95`} fill="url(#trendFill)" />
-          <polyline points={pts} fill="none" stroke={EMERALD} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-          {TREND.map((v, i) => (
-            <circle key={i} cx={(i / (TREND.length - 1)) * 280 + 10} cy={90 - (v / tMax) * 75} r="3" fill="#fff" stroke={EMERALD} strokeWidth="2" />
-          ))}
-        </svg>
-        <div className="mt-1 flex justify-between px-2 text-xs text-slate-400">
-          {TREND.map((_, i) => (
-            <span key={i}>W{i + 1}</span>
-          ))}
-        </div>
+        <SectionTitle icon={TrendingUp} title="Brand score over time" subtitle="Your last 8 scans — higher is better" />
+        {scores.length < 2 ? (
+          <p className="text-sm text-slate-500">Run at least two scans to see the trend.</p>
+        ) : (
+          <>
+            <svg viewBox="0 0 300 100" className="h-40 w-full">
+              <defs>
+                <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={EMERALD} stopOpacity="0.25" />
+                  <stop offset="100%" stopColor={EMERALD} stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              <polygon points={`10,95 ${pts} 290,95`} fill="url(#trendFill)" />
+              <polyline points={pts} fill="none" stroke={EMERALD} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+              {scores.map((v, i) => (
+                <circle key={i} cx={(i / (scores.length - 1)) * 280 + 10} cy={90 - (v / 100) * 75} r="3" fill="#fff" stroke={EMERALD} strokeWidth="2" />
+              ))}
+            </svg>
+            <div className="mt-1 flex justify-between px-2 text-xs text-slate-400">
+              {scores.map((v, i) => (
+                <span key={i}>{v}</span>
+              ))}
+            </div>
+          </>
+        )}
       </Card>
     </div>
   );
@@ -1534,6 +1653,8 @@ export default function Page() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [stage, setStage] = useState(1);
   const [log, setLog] = useState([]);
+  const [scans, setScans] = useState([]);
+  const [ready, setReady] = useState(false);
   const logRef = useRef([]);
   const menuRef = useRef(null);
 
@@ -1547,6 +1668,23 @@ export default function Page() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Use saved history from this browser if there is any
+      try {
+        const raw = localStorage.getItem('bp-state');
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (Array.isArray(saved.log)) {
+            if (!cancelled) {
+              logRef.current = saved.log;
+              setLog(saved.log);
+              setStage(Number.isInteger(saved.stage) ? saved.stage : 0);
+              setScans(Array.isArray(saved.scans) ? saved.scans : []);
+              setReady(true);
+            }
+            return;
+          }
+        }
+      } catch {}
       const base = Date.now() - 1000 * 60 * 60 * 5;
       const seed = [
         { actor: 'Kaira', role: 'Creator', action: 'Created draft "Diwali Campaign Caption"', stage: 0 },
@@ -1560,7 +1698,10 @@ export default function Page() {
         prev = e.hash;
         out.push(e);
       }
-      if (!cancelled) setLog(out);
+      if (!cancelled) {
+        setLog(out);
+        setReady(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -1583,9 +1724,47 @@ export default function Page() {
       entry.hash = await sha256(entryPayload(entry));
       logRef.current = [...logRef.current, entry];
       setLog(logRef.current);
+      return entry.id;
     },
     [role, stage]
   );
+
+  // Save history in this browser so it survives a refresh
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem('bp-state', JSON.stringify({ log, stage, scans }));
+    } catch {}
+  }, [log, stage, scans, ready]);
+
+  const recordScan = useCallback((rec) => setScans((s) => [...s.slice(-199), rec]), []);
+  const recordFix = useCallback(
+    (n) => setScans((s) => (s.length ? s.map((x, i) => (i === s.length - 1 ? { ...x, fixed: (x.fixed || 0) + n } : x)) : s)),
+    []
+  );
+
+  // Re-seal the chain after an entry is removed so the remaining history still verifies
+  const deleteEntry = useCallback(async (id) => {
+    const rest = logRef.current.filter((e) => e.id !== id);
+    const out = [];
+    let prev = 'GENESIS';
+    for (const e of rest) {
+      const n = { ...e, prevHash: prev };
+      n.hash = await sha256(entryPayload(n));
+      prev = n.hash;
+      out.push(n);
+    }
+    logRef.current = out;
+    setLog(out);
+    setScans((s) => s.filter((x) => x.logId !== id));
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    logRef.current = [];
+    setLog([]);
+    setScans([]);
+    setStage(0);
+  }, []);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -1644,7 +1823,7 @@ export default function Page() {
           💡 {TABS.find((t) => t.key === tab)?.help}
         </p>
         <div className={tab === 'scanner' ? '' : 'hidden'}>
-          <ScannerTab role={roleKey} onLog={addLog} />
+          <ScannerTab role={roleKey} onLog={addLog} onScan={recordScan} onFix={recordFix} />
         </div>
         {tab === 'visual' && <VisualTab onLog={addLog} />}
         {tab === 'vault' && <VaultTab />}
@@ -1663,9 +1842,11 @@ export default function Page() {
               });
             }}
             addLog={addLog}
+            onDeleteEntry={deleteEntry}
+            onClearHistory={clearHistory}
           />
         )}
-        {tab === 'insights' && <InsightsTab />}
+        {tab === 'insights' && <InsightsTab scans={scans} logCount={log.length} />}
       </main>
 
       <footer className="mx-auto max-w-7xl px-6 pb-8 text-center text-xs text-slate-400">
