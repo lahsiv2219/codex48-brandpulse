@@ -48,6 +48,7 @@ import {
   Trash2,
   TrendingUp,
   HelpCircle,
+  Info,
 } from 'lucide-react';
 import brandJson from '../data/brand-data.json';
 
@@ -160,6 +161,27 @@ const SAMPLE_DRAFT =
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
+
+function InfoTip({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        aria-label="What does this do?"
+        onClick={() => setOpen((o) => !o)}
+        className="grid h-5 w-5 place-items-center rounded-full border border-slate-300 bg-white text-slate-500 hover:bg-slate-100"
+      >
+        <Info size={12} />
+      </button>
+      {open && (
+        <span className="absolute right-0 top-7 z-30 w-64 rounded-lg bg-[#0B132B] p-3 text-left text-xs font-normal leading-relaxed text-white shadow-lg">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1356,8 +1378,8 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
               style={{ width: `calc((100% - 3rem) * ${stage / (STAGES.length - 1)})` }}
             />
             {STAGES.map((s, i) => {
-              const done = i < stage;
-              const active = i === stage;
+              const done = i < stage || stage === STAGES.length - 1;
+              const active = i === stage && stage !== STAGES.length - 1;
               return (
                 <div key={s.name} className="relative z-10 flex w-24 flex-col items-center text-center">
                   <div
@@ -1416,6 +1438,7 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
               >
                 <AlertTriangle size={13} /> Simulate tampering
               </button>
+              <InfoTip text="A practice button. It secretly changes one old entry in the history, like a bad person would. Then press Verify integrity and it will catch the change. It only edits the saved demo history, nothing else. Press Undo tampering to fix it." />
               {tampered && (
                 <button
                   onClick={undoTamper}
@@ -1438,6 +1461,7 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
               >
                 {checking ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Verify integrity
               </button>
+              <InfoTip text="Checks that nobody has changed the history. Each entry is locked to the one before it, so if any entry was edited, it shows exactly which one." />
             </div>
           }
         />
