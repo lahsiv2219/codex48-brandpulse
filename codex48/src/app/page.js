@@ -570,6 +570,25 @@ function ScannerTab({ role, onLog, onScan, onFix }) {
     onLog(`Accepted ${todo.length} rewrite${todo.length === 1 ? '' : 's'} at once`);
   };
 
+  const openAll = issues.filter((i) => !accepted[i.id] && i.flagged);
+
+  const removeAll = () => {
+    if (!openAll.length) return;
+    const longestFirst = [...openAll].sort((a, b) => b.flagged.length - a.flagged.length);
+    setDraft((d) => {
+      let out = d;
+      for (const it of longestFirst) out = out.replace(new RegExp(escapeRegExp(it.flagged), 'i'), () => '');
+      return out.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,!?;:])/g, '$1').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    });
+    setAccepted((a) => {
+      const next = { ...a };
+      openAll.forEach((i) => { next[i.id] = true; });
+      return next;
+    });
+    onFix?.(openAll.length);
+    onLog(`Removed ${openAll.length} flagged item${openAll.length === 1 ? '' : 's'} at once`);
+  };
+
   const dismiss = (issue) => {
     setIssues((list) => list.filter((i) => i.id !== issue.id));
   };
@@ -774,19 +793,25 @@ function ScannerTab({ role, onLog, onScan, onFix }) {
             </div>
           )}
 
-          {!loading && openWithRewrite.length > 0 && (
-            <div className="mb-3">
-              <button
-                onClick={acceptAll}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B132B] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#16213f]"
-              >
-                <CheckCircle2 size={16} /> Accept all rewrites ({openWithRewrite.length})
-              </button>
-              {openNoRewrite > 0 && (
-                <p className="mt-1.5 text-xs text-slate-500">
-                  {openNoRewrite} item{openNoRewrite === 1 ? ' has' : 's have'} no automatic rewrite. Use “Remove this text” on {openNoRewrite === 1 ? 'it' : 'them'}.
-                </p>
+          {!loading && openAll.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {openWithRewrite.length > 0 && (
+                <button
+                  onClick={acceptAll}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B132B] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#16213f]"
+                >
+                  <CheckCircle2 size={16} /> Accept all rewrites ({openWithRewrite.length})
+                </button>
               )}
+              <button
+                onClick={removeAll}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-50"
+              >
+                <Trash2 size={16} /> Remove all bad text ({openAll.length})
+              </button>
+              <p className="text-xs text-slate-500">
+                “Accept all” swaps in the better wording. “Remove all” simply deletes every flagged piece from your draft.
+              </p>
             </div>
           )}
 
@@ -957,6 +982,15 @@ function VisualTab({ onLog }) {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
       <div className="lg:col-span-3">
+        <div className="mb-6 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          <p className="font-semibold">What is this tab for?</p>
+          <p className="mt-1">It checks your poster or banner, not your words. Text must be easy to read on its background, and the colours should match your brand.</p>
+          <ol className="mt-2 list-decimal space-y-0.5 pl-5">
+            <li>Upload your poster or image. We find its main colours.</li>
+            <li>Each colour shows on-brand or off-brand.</li>
+            <li>Click two colours (text and background). Green Pass means people can read it easily; red Fail means change the colours.</li>
+          </ol>
+        </div>
         <Card className="p-5">
           <SectionTitle icon={Eye} title="Visual Asset Upload" subtitle="Drop a creative to extract its palette and test accessibility." />
           <div
