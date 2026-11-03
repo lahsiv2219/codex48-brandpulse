@@ -1332,18 +1332,6 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
     setChecking(false);
   };
 
-  const tamper = () => {
-    if (log.length < 2) return;
-    const idx = Math.max(1, Math.floor(log.length / 2) - 1);
-    setLog((l) => l.map((e, i) => (i === idx ? { ...e, action: e.action + ' [edited]' } : e)));
-    setVerify(null);
-  };
-
-  const tampered = log.some((e) => e.action.endsWith(' [edited]'));
-  const undoTamper = () => {
-    setLog((l) => l.map((e) => (e.action.endsWith(' [edited]') ? { ...e, action: e.action.slice(0, -' [edited]'.length) } : e)));
-    setVerify(null);
-  };
   const askDelete = (e, i) => {
     if (window.confirm(`Delete history entry #${i + 1}?\n\n"${e.action}"\n\nIf it was a scan, that scan is also removed from Insights.`)) {
       onDeleteEntry(e.id);
@@ -1428,25 +1416,9 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
         <SectionTitle
           icon={Lock}
           title="Tamper-Evident Audit Log"
-          subtitle="Every action is saved here. Each entry is locked to the one before it, so a secret edit is detected. Try: Simulate tampering, then Verify integrity."
+          subtitle="Every action is saved here. Each entry is locked to the one before it, so a secret edit is detected. Press Verify integrity to check nobody has changed it."
           right={
             <div className="flex flex-wrap gap-2">
-              <button
-                onClick={tamper}
-                title="Demo only: secretly edits one entry so you can see Verify integrity catch it"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-              >
-                <AlertTriangle size={13} /> Simulate tampering
-              </button>
-              <InfoTip text="A practice button. It secretly changes one old entry in the history, like a bad person would. Then press Verify integrity and it will catch the change. It only edits the saved demo history, nothing else. Press Undo tampering to fix it." />
-              {tampered && (
-                <button
-                  onClick={undoTamper}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
-                >
-                  <RotateCcw size={13} /> Undo tampering
-                </button>
-              )}
               <button
                 onClick={askClear}
                 disabled={log.length === 0}
