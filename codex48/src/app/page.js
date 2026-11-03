@@ -1426,6 +1426,7 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
               >
                 <Trash2 size={13} /> Clear all history
               </button>
+              <div className="inline-flex items-center gap-1.5">
               <button
                 onClick={runVerify}
                 disabled={checking}
@@ -1433,7 +1434,8 @@ function WorkflowTab({ role, actor, stage, setStage, log, setLog, addLog, onDele
               >
                 {checking ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Verify integrity
               </button>
-              <InfoTip text="Checks that nobody has changed the history. Each entry is locked to the one before it, so if any entry was edited, it shows exactly which one." />
+                <InfoTip text="Checks that nobody has changed the history. Each entry is locked to the one before it, so if any entry was edited, it shows exactly which one." />
+              </div>
             </div>
           }
         />
