@@ -219,6 +219,80 @@ function wcag(ratio) {
   };
 }
 
+const MAX_FILE_MB = 25;
+const MAX_CHARS = 50000;
+const MAMMOTH_URL = 'https://cdn.jsdelivr.net/npm/mammoth@1/mammoth.browser.min.js';
+const PDFJS_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+const PDFJS_WORKER_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+const scriptCache = {};
+function loadScript(src) {
+  if (!scriptCache[src]) {
+    scriptCache[src] = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.async = true;
+      el.onload = () => resolve();
+      el.onerror = () => {
+        delete scriptCache[src];
+        reject(new Error('The file reader could not be loaded'));
+      };
+      document.head.appendChild(el);
+    });
+  }
+  return scriptCache[src];
+}
+
+async function readDocx(file) {
+  await loadScript(MAMMOTH_URL);
+  const out = await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+  return out.value || '';
+}
+
+async function readPdf(file) {
+  await loadScript(PDFJS_URL);
+  const lib = window.pdfjsLib;
+  lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+  const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((it) => it.str + (it.hasEOL ? '\n' : ' ')).join('').replace(/ +\n/g, '\n'));
+  }
+  return pages.join('\n\n');
+}
+
+async function extractFromFile(file, isText) {
+  let text = '';
+  if (isText) {
+    text = await file.text();
+  } else {
+    try {
+      text = (file.name || '').toLowerCase().endsWith('.pdf') ? await readPdf(file) : await readDocx(file);
+    } catch (err) {
+      if (err?.name === 'PasswordException') throw new Error('This PDF is password protected. Please remove the password and try again.');
+      if (file.size > 4 * 1024 * 1024) {
+        throw new Error('This file could not be opened in your browser. Check your internet connection and try again, or use a file under 4 MB.');
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/extract', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not read that file.');
+      text = json.text;
+    }
+  }
+  text = text.replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!text) throw new Error('No readable text was found. If this PDF is a scan or a picture of text, it cannot be read.');
+  let note = '';
+  if (text.length > MAX_CHARS) {
+    text = text.slice(0, MAX_CHARS);
+    note = `This file is long, so only the first ${MAX_CHARS.toLocaleString()} characters were loaded.`;
+  }
+  return { text, note };
+}
+
 function wordDiff(a, b) {
   const x = a.split(/(\s+)/).filter(Boolean);
   const y = b.split(/(\s+)/).filter(Boolean);
@@ -343,6 +417,22 @@ function ScannerTab({ role, onLog }) {
   const [uploading, setUploading] = useState(false);
   const [fileNote, setFileNote] = useState('');
   const fileRef = useRef(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Remember the draft while this browser tab is open
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('bp-draft');
+      if (saved) setDraft(saved);
+    } catch {}
+    setHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      sessionStorage.setItem('bp-draft', draft);
+    } catch {}
+  }, [draft, hydrated]);
 
   const counts = useMemo(() => {
     const open = issues.filter((i) => !accepted[i.id]);
@@ -372,37 +462,39 @@ function ScannerTab({ role, onLog }) {
     if (!file) return;
     setFileNote('');
     const name = (file.name || '').toLowerCase();
-    if (file.size > 4 * 1024 * 1024) {
-      setFileNote('That file is bigger than 4 MB. Please choose a smaller one.');
-      return;
-    }
     const isText = name.endsWith('.txt') || name.endsWith('.md');
     if (!isText && !name.endsWith('.pdf') && !name.endsWith('.docx')) {
       setFileNote('Please choose a PDF, a Word file (.docx) or a text file (.txt). For an old .doc file, open it in Word and use Save As → .docx first.');
       return;
     }
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      setFileNote(`That file is bigger than ${MAX_FILE_MB} MB. Please split it or choose a smaller one.`);
+      return;
+    }
     setUploading(true);
     try {
-      let text = '';
-      if (isText) {
-        text = await file.text();
-      } else {
-        const fd = new FormData();
-        fd.append('file', file);
-        const res = await fetch('/api/extract', { method: 'POST', body: fd });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error || 'Could not read that file.');
-        text = json.text;
-        if (json.note) setFileNote(json.note);
-      }
+      const { text, note } = await extractFromFile(file, isText);
       setDraft(text);
       resetResults();
+      if (note) setFileNote(note);
       onLog(`Loaded file "${file.name}"`);
     } catch (e) {
       setFileNote(e.message || 'Could not read that file.');
     } finally {
       setUploading(false);
     }
+  };
+
+  const clearAll = () => {
+    setDraft('');
+    resetResults();
+    setSource(null);
+    setFileNote('');
+    if (fileRef.current) fileRef.current.value = '';
+    try {
+      sessionStorage.removeItem('bp-draft');
+    } catch {}
+    onLog('Cleared the scanner');
   };
 
   const diff = useMemo(() => (baseline && baseline !== draft ? wordDiff(baseline, draft) : null), [baseline, draft]);
@@ -518,21 +610,30 @@ function ScannerTab({ role, onLog }) {
               {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
               {uploading ? 'Reading file…' : 'Upload PDF or Word file'}
             </button>
-            <span className="text-xs text-slate-400">or drag a file onto the box · PDF, .docx or .txt · up to 4 MB</span>
+            <span className="text-xs text-slate-400">or drag a file onto the box · PDF, .docx or .txt · up to 25 MB</span>
           </div>
           {fileNote && <p className="mt-2 text-xs text-amber-700">{fileNote}</p>}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-500">
               {draft.trim() ? draft.trim().split(/\s+/).length : 0} words · {draft.length} characters
             </div>
-            <button
-              onClick={runScan}
-              disabled={loading || !draft.trim()}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#047857] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#065f46] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-              {loading ? 'Scanning…' : 'Run AI Scan'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={clearAll}
+                disabled={loading || (!draft && !scanned && !fileNote)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 size={15} /> Clear
+              </button>
+              <button
+                onClick={runScan}
+                disabled={loading || !draft.trim()}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#047857] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#065f46] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                {loading ? 'Scanning…' : 'Run AI Scan'}
+              </button>
+            </div>
           </div>
         </Card>
 
@@ -1542,7 +1643,9 @@ export default function Page() {
         <p className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
           💡 {TABS.find((t) => t.key === tab)?.help}
         </p>
-        {tab === 'scanner' && <ScannerTab role={roleKey} onLog={addLog} />}
+        <div className={tab === 'scanner' ? '' : 'hidden'}>
+          <ScannerTab role={roleKey} onLog={addLog} />
+        </div>
         {tab === 'visual' && <VisualTab onLog={addLog} />}
         {tab === 'vault' && <VaultTab />}
         {tab === 'workflow' && (

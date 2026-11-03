@@ -23,6 +23,28 @@ function escapeRegex(str) {
 }
 
 /* ---------- STAGE 1A: hate speech and profanity (zero tolerance) ---------- */
+// Spelling tricks we undo before checking: accents, look-alike characters,
+// 1337-speak, invisible characters, repeated letters and letters spaced apart.
+const FOLD_LEET = { '1': 'i', '0': 'o', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's' };
+
+const FILTER_PATTERNS = [
+  // Slur families. Written to catch spelling variants (extra letters, h, q, b, dropped g)
+  // but NOT innocent words such as Niger, Nigeria, nigh, Nina.
+  /\bn+[i!|l]+(?:[gqb]{2,}h?(?:a|e|er|ah|uh|ers?)+|[gq]h?a+)[sz]*\b/,
+  /\bf+a+g{1,2}(?:[eo]+t+|i+t+)?s?\b/,
+  /\bre+t+a+r+d+(?:ed|s)?\b/,
+  /\btr+a+n+n+(?:y|ie)s?\b/,
+  // Profanity with missing letters or symbols: fck, fuk, sht, b!tch, a$$hole
+  /\bf+(?:u+c*|u*c+)k+(?:ing|in|ed|er|ers|s)?\b/,
+  /\bs+h+[i!*]*t+(?:ty|s|head)?\b/,
+  /\bb+[i!*]*t+c+h+(?:es|y)?\b/,
+  /\ba+s{2,}h+o+l+e+s?\b/,
+  /\bc+u+n+t+s?\b/,
+  // Identity words used as insults
+  /\b(?:that'?s|thats|so|you'?re|youre|ur|u\s+r|such\s+a)\s+(?:ga+y+|retarded|spastic)\b/,
+];
+const FILTER_TESTS = FILTER_PATTERNS.map((re) => new RegExp(re.source));
+
 function safetyFlag(phrase, index) {
   return {
     id: `safety-${index}-${phrase}`,
@@ -40,25 +62,63 @@ function safetyFlag(phrase, index) {
   };
 }
 
+function stripInvisible(text) {
+  const chars = [];
+  const map = [];
+  for (let i = 0; i < text.length; i++) {
+    if (/[​-‍﻿­⁠]/.test(text[i])) continue;
+    chars.push(text[i]);
+    map.push(i);
+  }
+  return { clean: chars.join(''), map };
+}
+
+// Same length as the input, so match positions line up with the original text.
+function foldForPatterns(clean) {
+  let out = '';
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    const base = (c.normalize('NFKD').replace(/[̀-ͯ]/g, '')[0] || c).toLowerCase()[0] || c;
+    out += FOLD_LEET[base] || base;
+  }
+  return out;
+}
+
 function runSafetyPass(text) {
-  const clean = text.replace(/[​-‍﻿]/g, '');
+  const { clean, map } = stripInvisible(text);
   const found = [];
   const seen = new Set();
-  const add = (phrase, idx) => {
+  const add = (start, endExclusive) => {
+    const phrase = text.slice(map[start], map[endExclusive - 1] + 1);
     const k = phrase.toLowerCase();
-    if (seen.has(k)) return;
+    if (!phrase.trim() || seen.has(k)) return;
     seen.add(k);
-    found.push(safetyFlag(phrase, idx));
+    found.push(safetyFlag(phrase, map[start]));
   };
-  for (const m of safetyMatcher.getAllMatches(clean, true)) {
-    add(clean.slice(m.startIndex, m.endIndex + 1), m.startIndex);
+
+  // 1. The word list (handles leetspeak, look-alikes and repeated letters)
+  for (const m of safetyMatcher.getAllMatches(clean, true)) add(m.startIndex, m.endIndex + 1);
+
+  // 2. Our own spelling-variant patterns
+  const folded = foldForPatterns(clean);
+  for (const re of FILTER_PATTERNS) {
+    re.lastIndex = 0;
+    const g = new RegExp(re.source, 'g');
+    let m;
+    while ((m = g.exec(folded)) !== null) {
+      if (!m[0]) { g.lastIndex++; continue; }
+      add(m.index, m.index + m[0].length);
+    }
   }
-  // Catch letters split up by dots, dashes, stars: "f.u.c.k"
-  const spaced = /(?:[a-z][.\-_*]){2,}[a-z]/gi;
+
+  // 3. Letters spread apart: "f.u.c.k", "n i g g a", "s-h-i-t"
+  const spaced = /\b(?:[a-z0-9@$][\s.\-_*,]{1,2}){2,}[a-z0-9@$]\b/gi;
   let sm;
   while ((sm = spaced.exec(clean)) !== null) {
-    const joined = sm[0].replace(/[.\-_*]/g, '');
-    if (safetyMatcher.hasMatch(joined)) add(sm[0], sm.index);
+    const joined = sm[0].replace(/[^a-z0-9@$]/gi, '');
+    const joinedFolded = foldForPatterns(joined);
+    const bad = safetyMatcher.hasMatch(joined) || FILTER_TESTS.some((t) => t.test(joinedFolded));
+    if (bad) add(sm.index, sm.index + sm[0].length);
   }
   return found;
 }
@@ -124,38 +184,98 @@ function dropNested(list) {
   );
 }
 
-/* ---------- STAGE 1B: Brand Vault rules ---------- */
+/* ---------- STAGE 1B: Brand Vault rules (forgiving about spelling) ---------- */
+const LEET_CLASS = { a: '[a4@]', e: '[e3]', i: '[i1!]', o: '[o0]', s: '[s5$]', t: '[t7]' };
+
+// "guaranteed" also matches guaranteeed, gu4ranteed, GUARANTEED...
+function looseTermRegex(term) {
+  const parts = [];
+  let prev = '';
+  for (const ch of term) {
+    const lower = ch.toLowerCase();
+    if (/[a-z]/.test(lower)) {
+      if (lower === prev) continue; // repeated letters are covered by the "+"
+      parts.push((LEET_CLASS[lower] || lower) + '+');
+    } else if (/\s/.test(ch)) {
+      parts.push('[\\s.\\-_*]+');
+    } else if (ch === "'" || ch === '’') {
+      parts.push("['’]?");
+    } else {
+      parts.push(escapeRegex(ch));
+    }
+    prev = lower;
+  }
+  return new RegExp(`(?<![A-Za-z0-9])${parts.join('')}(?![A-Za-z0-9])`, 'gi');
+}
+
+function collapseRepeats(w) {
+  return w.replace(/(.)\1+/g, '$1');
+}
+
+function editDistance(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+
 function runVaultPass(draftText, rules) {
   const flags = [];
-  let n = 1;
-  for (const item of rules) {
+  const used = new Set();
+
+  const tokens = [];
+  const tre = /[A-Za-z]{6,}/g;
+  let tm;
+  while ((tm = tre.exec(draftText)) !== null) {
+    tokens.push({ text: tm[0], index: tm.index, key: collapseRepeats(tm[0].toLowerCase()) });
+  }
+
+  rules.forEach((item, ruleNo) => {
+    const label = item.id || `rule${ruleNo}`;
+    const severity = item.severity === 'red' || item.severity === 'critical' ? 'red' : 'amber';
+    const push = (matchText, index) => {
+      const key = `${label}-${index}`;
+      if (used.has(key)) return;
+      used.add(key);
+      const reason = item.description || item.reason || item.explanation || `Avoid using "${matchText}".`;
+      const cite = item.citation || item.source || item.ruleCited || 'Brand Guide §2.1';
+      const rw = item.replacement || item.suggestedReplacement || item.suggestedRewrite || '';
+      flags.push({
+        id: `vault-${label}-${index}`,
+        kind: 'rule',
+        flagged: matchText,
+        phrase: matchText,
+        title: item.title || (severity === 'red' ? 'Critical brand violation' : 'Brand advisory'),
+        severity,
+        message: reason,
+        explanation: reason,
+        citation: cite,
+        ruleCited: cite,
+        rewrite: rw,
+        suggestedRewrite: rw,
+      });
+    };
+
     const terms = Array.isArray(item.terms) ? item.terms : [item.term || item];
     for (const termText of terms) {
       if (!termText || typeof termText !== 'string') continue;
-      const regex = new RegExp(`\\b${escapeRegex(termText)}\\b`, 'gi');
-      let match;
-      while ((match = regex.exec(draftText)) !== null) {
-        const severity = item.severity === 'red' || item.severity === 'critical' ? 'red' : 'amber';
-        const reason = item.description || item.reason || item.explanation || `Avoid using "${match[0]}".`;
-        const cite = item.citation || item.source || item.ruleCited || 'Brand Guide §2.1';
-        const rw = item.replacement || item.suggestedReplacement || item.suggestedRewrite || '';
-        flags.push({
-          id: `vault-${item.id || n++}-${match.index}`,
-          kind: 'rule',
-          flagged: match[0],
-          phrase: match[0],
-          title: item.title || (severity === 'red' ? 'Critical brand violation' : 'Brand advisory'),
-          severity,
-          message: reason,
-          explanation: reason,
-          citation: cite,
-          ruleCited: cite,
-          rewrite: rw,
-          suggestedRewrite: rw,
-        });
+      const re = looseTermRegex(termText);
+      let m;
+      while ((m = re.exec(draftText)) !== null) {
+        if (!m[0]) { re.lastIndex++; continue; }
+        push(m[0], m.index);
+      }
+      // One-letter typos in longer single words: "guarenteed", "revolutionery"
+      if (/^[A-Za-z]{7,}$/.test(termText)) {
+        const key = collapseRepeats(termText.toLowerCase());
+        for (const t of tokens) {
+          if (t.key !== key && Math.abs(t.key.length - key.length) <= 1 && editDistance(t.key, key) === 1) push(t.text, t.index);
+        }
       }
     }
-  }
+  });
   return flags;
 }
 
@@ -231,7 +351,7 @@ Claims backed by proof in the Brand Vault (these are OK to use): ${JSON.stringif
 Review the draft below. Return ONLY JSON in exactly this shape:
 {"tone":{"formality":1-5,"empathy":1-5,"urgency":1-5,"aggressiveness":1-5},
  "issues":[{"sentence":"exact sentence copied from the draft","problem":"plain-language reason","rule":"which brand principle it breaks","severity":"red or amber","rewrite":"compliant rewrite of that exact sentence, same meaning, calm and warm tone"}]}
-Flag every sentence that is angry, hostile, blaming, sarcastic, threatening, pushy, manipulative or deceptive, or that makes statistics or claims NOT backed by the proven claims above. Use severity red for hostile, threatening or deceptive sentences and amber for milder tone problems. Be thorough: short informal text can still break the brand voice. If the draft is truly fine, return an empty issues list.
+Always flag slurs, hate speech, insults and profanity with severity red, even when misspelled, spaced out, abbreviated or disguised. Flag every sentence that is angry, hostile, blaming, sarcastic, threatening, pushy, manipulative or deceptive, or that makes statistics or claims NOT backed by the proven claims above. Use severity red for hostile, threatening or deceptive sentences and amber for milder tone problems. Be thorough: short informal text can still break the brand voice. If the draft is truly fine, return an empty issues list.
 
 Draft:
 """${draftText}"""`;
@@ -296,8 +416,8 @@ export async function POST(request) {
     if (typeof draftText !== 'string' || draftText.trim().length === 0) {
       return NextResponse.json({ error: 'Please type or paste some text first.' }, { status: 400 });
     }
-    if (draftText.length > 20000) {
-      return NextResponse.json({ error: 'Text is too long. Please scan up to 20,000 characters at a time.' }, { status: 400 });
+    if (draftText.length > 50000) {
+      return NextResponse.json({ error: 'Text is too long. Please scan up to 50,000 characters at a time.' }, { status: 400 });
     }
 
     const vault = await loadBrandVault();

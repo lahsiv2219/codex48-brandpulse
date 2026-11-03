@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 const MAX_BYTES = 4 * 1024 * 1024; // Vercel allows about 4.5 MB per request
-const MAX_CHARS = 20000; // same limit as the scanner
+const MAX_CHARS = 50000; // same limit as the scanner
 
 function tidy(text) {
   return text
@@ -59,7 +59,7 @@ export async function POST(request) {
     let note = '';
     if (text.length > MAX_CHARS) {
       text = text.slice(0, MAX_CHARS);
-      note = 'This file is long, so only the first 20,000 characters were loaded.';
+      note = 'This file is long, so only the first 50,000 characters were loaded.';
     }
     return NextResponse.json({ ok: true, text, note });
   } catch (err) {
